@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DecentraVote</title>
+    <base href="/">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1">
+    <link rel="icon"
+          type="image/x-icon"
+          href="">
+    <link href="https://fonts.googleapis.com/css?family=Material+Icons|Material+Icons+Outlined|Material+Icons+Two+Tone|Material+Icons+Round|Material+Icons+Sharp"
+          rel="stylesheet">
+</head>
+<body class="ev-typography">
+<app-root></app-root>
+
+<script src="https://cdn.ethers.io/lib/ethers-5.0.umd.min.js"
+        type="text/javascript">
+</script>
+
+<script>
+    const organizationAbi = [{
+        "anonymous": false,
+        "inputs": [{"indexed": true, "internalType": "address", "name": "owner", "type": "address"}, {
+            "indexed": true,
+            "internalType": "address",
+            "name": "storageAddress",
+            "type": "address"
+        }, {"indexed": false, "internalType": "string", "name": "storageUrl", "type": "string"}],
+        "name": "StorageAdded",
+        "type": "event"
+    }, {
+        "constant": true,
+        "inputs": [],
+        "name": "getFileHashes",
+        "outputs": [{"internalType": "bytes32[]", "name": "", "type": "bytes32[]"}],
+        "payable": false,
+        "stateMutability": "view",
+        "type": "function"
+    }];
+    const organizationAddress = new URLSearchParams(document.location.search).get("address") || localStorage.getItem("decentravote-organization");
+    const rpcServer = new URLSearchParams(document.location.search).get("server") || localStorage.getItem("decentravote-server");
+    console.log('Requested Organization: ' + organizationAddress);
+    console.log('Requested rpcServer:    ' + rpcServer);
+    if (organizationAddress !== null) {
+        localStorage.setItem("decentravote-organization", organizationAddress);
+    }
+    if (rpcServer !== null) {
+        localStorage.setItem("decentravote-server", rpcServer);
+    }
+
+    const provider = new ethers.providers.JsonRpcProvider(rpcServer);
+    const organizationContract = new ethers.Contract(organizationAddress, organizationAbi, provider);
+
+    async function getStorageUrls() {
+        const filter = organizationContract.filters.StorageAdded(null);
+        const events = await organizationContract.queryFilter(filter, 0, 'latest');
+        return events.map(event => event.args.storageUrl)
+    }
+
+    async function getFileHashes() {
+        return await organizationContract.getFileHashes();
+    }
+
+    getStorageUrls().then((urls) => {
+        console.log('Storage Urls: ' + urls);
+        const url = urls[Math.floor(Math.random() * urls.length)];
+
+        getFileHashes().then((hashes) => {
+            console.log('File hashes: ' + hashes);
+            hashes.forEach(hash => createScriptElement(hash, url))
+        })
+    });
+
+    function createScriptElement(hash, url) {
+        const request = new XMLHttpRequest();
+        request.open("GET", url + "/api/storage?hash=" + hash, true);
+        request.responseType = 'text';
+        request.onload = function () {
+            if (request.readyState === request.DONE && request.status === 200) {
+                if (hash === ethers.utils.id(request.responseText)) {
+                    if (request.responseText.includes("application/javascript")) {
+                        const element = document.createElement("script");
+                        console.log("+add js: " + hash);
+                        element.innerHTML = atob(request.responseText.split(',')[1]);
+                        element.type = "text/javascript";
+                        element.defer = true;
+                        document.head.appendChild(element);
+                        return;
+                    }
+                    if (request.responseText.includes("text/css")) {
+                        console.log("+add css" + hash);
+                        const css = document.createElement("style");
+                        css.innerHTML = atob(request.responseText.split(',')[1]);
+                        document.head.appendChild(css);
+                        return;
+                    }
+                    if (request.responseText.includes("image/x-icon")) {
+                        console.log("icon");
+                        const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
+                        link.type = 'image/x-icon';
+                        link.rel = 'shortcut icon';
+                        link.innerHTML = atob(request.responseText.split(',')[1]);
+                        document.head.appendChild(link);
+                    }
+                } else {
+                    console.warn("ERROR: Requested hash: " + hash + " received different response: " + ethers.utils.id(request.responseText));
+                }
+            }
+        };
+        request.send(null);
+    }
+</script>
+</body>
+</html>
