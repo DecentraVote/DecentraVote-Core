@@ -39,10 +39,13 @@
         "stateMutability": "view",
         "type": "function"
     }];
+
     const organizationAddress = new URLSearchParams(document.location.search).get("address") || localStorage.getItem("decentravote-organization");
     const rpcServer = new URLSearchParams(document.location.search).get("server") || localStorage.getItem("decentravote-server");
+
     console.log('Requested Organization: ' + organizationAddress);
-    console.log('Requested rpcServer:    ' + rpcServer);
+    console.log('Requested rpcServer: ' + rpcServer);
+
     if (organizationAddress !== null) {
         localStorage.setItem("decentravote-organization", organizationAddress);
     }
@@ -64,52 +67,109 @@
     }
 
     getStorageUrls().then((urls) => {
-        console.log('Storage Urls: ' + urls);
+        console.log('Storage URLs: ' + urls);
         const url = urls[Math.floor(Math.random() * urls.length)];
 
         getFileHashes().then((hashes) => {
-            console.log('File hashes: ' + hashes);
-            hashes.forEach(hash => createScriptElement(hash, url))
+            console.log('File hashes from contract: ' + hashes);
+            hashes.forEach(hash => {
+                getFileFromCache(hash).then((value) => {
+                    if (!value) {
+                        const request = getFileFromStorage(hash, url);
+                        request.onload = function () {
+                            if (request.readyState === request.DONE && request.status === 200) {
+                                if (hash === ethers.utils.id(request.responseText)) {
+                                    includeFile(request.responseText, hash);
+                                    setFileInCache(hash, request.responseText);
+                                } else {
+                                    console.error("Requested hash: " + hash + " received different response: " + ethers.utils.id(request.responseText));
+                                }
+
+                            }
+                        };
+                        request.send(null);
+                    } else {
+                        includeFile(value, hash);
+                    }
+                });
+            });
         })
     });
 
-    function createScriptElement(hash, url) {
+    function includeFile(value, hash) {
+        if (value.includes("application/javascript")) {
+            console.log("Including js file: " + hash);
+            const element = document.createElement("script");
+            element.innerHTML = atob(value.split(',')[1]);
+            element.type = "text/javascript";
+            element.defer = true;
+            document.head.appendChild(element);
+        }
+        if (value.includes("text/css")) {
+            console.log("Including css file: " + hash);
+            const element = document.createElement("style");
+            element.innerHTML = atob(value.split(',')[1]);
+            document.head.appendChild(element);
+        }
+        if (value.includes("image/x-icon")) {
+            console.log("Including icon file: " + hash);
+            const element = document.querySelector("link[rel*='icon']") || document.createElement('link');
+            element.type = 'image/x-icon';
+            element.rel = 'shortcut icon';
+            element.innerHTML = atob(value.split(',')[1]);
+            document.head.appendChild(element);
+        }
+    }
+
+    function getFileFromStorage(hash, url) {
+        console.log('Preparing request for hash ' + hash + ' to storage ' + url);
         const request = new XMLHttpRequest();
         request.open("GET", url + "/api/storage?hash=" + hash, true);
         request.responseType = 'text';
-        request.onload = function () {
-            if (request.readyState === request.DONE && request.status === 200) {
-                if (hash === ethers.utils.id(request.responseText)) {
-                    if (request.responseText.includes("application/javascript")) {
-                        const element = document.createElement("script");
-                        console.log("+add js: " + hash);
-                        element.innerHTML = atob(request.responseText.split(',')[1]);
-                        element.type = "text/javascript";
-                        element.defer = true;
-                        document.head.appendChild(element);
-                        return;
-                    }
-                    if (request.responseText.includes("text/css")) {
-                        console.log("+add css" + hash);
-                        const css = document.createElement("style");
-                        css.innerHTML = atob(request.responseText.split(',')[1]);
-                        document.head.appendChild(css);
-                        return;
-                    }
-                    if (request.responseText.includes("image/x-icon")) {
-                        console.log("icon");
-                        const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
-                        link.type = 'image/x-icon';
-                        link.rel = 'shortcut icon';
-                        link.innerHTML = atob(request.responseText.split(',')[1]);
-                        document.head.appendChild(link);
-                    }
+        return request;
+    }
+
+    function getFileFromCache(hash) {
+        console.log('Requesting from cache: ' + hash);
+        return caches.open('evoting-cache').then((cache) => {
+            return cache.match(hash).then((response) => {
+                if (!response) {
+                    console.log('File not found in cache: ' + hash);
+                    return null;
                 } else {
-                    console.warn("ERROR: Requested hash: " + hash + " received different response: " + ethers.utils.id(request.responseText));
+                    return response.text().then((value) => {
+                        return value;
+                    })
                 }
-            }
-        };
-        request.send(null);
+            })
+        });
+    }
+
+    function setFileInCache(hash, value) {
+        console.log('Writing in the cache: ' + hash);
+        caches.open('evoting-cache').then((cache) => {
+            const response = new Response(value);
+            response.headers.append('X-Request', hash);
+            response.headers.append('X-Date-Added', getDate());
+            cache.put(hash, response).then(() => {
+                console.log('Wrote in the cache: ' + hash);
+            });
+        });
+    }
+
+    Number.prototype.padLeft = function (base, chr) {
+        const len = (String(base || 10).length - String(this).length) + 1;
+        return len > 0 ? new Array(len).join(chr || '0') + this : this;
+    };
+
+    function getDate() {
+        const d = new Date;
+        return [d.getFullYear(),
+                (d.getMonth() + 1).padLeft(),
+                d.getDate().padLeft()].join('-') + '-' +
+            [d.getHours().padLeft(),
+                d.getMinutes().padLeft(),
+                d.getSeconds().padLeft()].join('-');
     }
 </script>
 </body>
